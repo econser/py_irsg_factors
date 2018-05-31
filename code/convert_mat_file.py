@@ -340,6 +340,68 @@ def get_geomean_scores(image_ixs, query_obj, query_ix, potentials, platt_models,
 #===============================================================================
 # FACTOR-BASED ENERGY
 #
+class FuncDetail(object):
+    """Gathers OpenGM function information in a single class
+    
+    Attributes:
+    gm_function_id (int): OpenGM function ID
+    function_type (str): description of the function type
+    source (str): high-level description of the function
+    detail (str): detailed description of the function
+    """
+    def __init__(self, gm_function_id, var_indices, function_type, source, detail):
+        self.gm_function_id = gm_function_id
+        self.var_indices = var_indices
+        self.function_type = function_type
+        self.source = source
+        self.detail = detail
+
+
+
+class BinDets (object):
+    def __init__(self, description, factor_mtx, object_name, predicate, subject_name):
+        self.description = description
+        self.factor = factor_mtx
+        self.object_name = object_name
+        self.predicate_name = predicate_name
+        self.subject_name = subject_name
+
+class UnaryDets (object):
+    def __init__(self, description, factor_array):
+        self.description = description
+        self.factor_array = factor_array
+
+class _DetectionTracker (object):
+    def __init__(self, image_path):
+        self.image_path = image_path
+        self.box_coords = None
+        self.object_names = []
+
+class DetectionGroup (object):
+    def __init__(self, rel_str, ll_relationship, object_boxes, object_name, subject_boxes, subject_name):
+        self.relationship = rel_str
+        self.ll_relationship = ll_relationship
+        self.object_boxes = object_boxes
+        self.object_name = object_name
+        self.subject_boxes = subject_boxes
+        self.subject_name = subject_name
+
+class DetectionTracker (object):
+    def __init__(self, image_path):
+        self.image_path = image_path
+        self.box_pairs = None
+        self.object_names = []
+        self.box_coords = None
+        self.unary_detections = []
+        self.detected_vars = []
+        self.relationships = []
+  
+    def add_group(self, rel_str, ll_relationship, object_boxes, object_name, subject_boxes, subject_name):
+        grp = DetectionGroup(rel_str, ll_relationship, object_boxes, object_name, subject_boxes, subject_name)
+        self.relationships.append(grp)
+
+
+
 def generate_pgm(if_data, verbose=False):
     # gather data from the if data object
     query_graph = if_data.current_sg_query
