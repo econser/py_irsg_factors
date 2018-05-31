@@ -2,9 +2,11 @@
 
 import os
 import json
+import itertools
 import numpy as np
 import opengm as ogm
 import scipy.io as sio
+from scipy.stats import multivariate_normal as mvn
 
 
 
