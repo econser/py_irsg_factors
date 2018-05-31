@@ -1,7 +1,9 @@
 #from __future__ import print_function
 
+import os
 import json
 import numpy as np
+import opengm as ogm
 import scipy.io as sio
 
 
@@ -603,31 +605,43 @@ def generate_pgm(if_data, verbose=False):
 
 
 def do_inference(gm, n_steps=120, damping=0., convergence_bound=0.001, verbose=False):
-  """ Run belief propagation on the providede graphical model
-  returns:
-    energy (float): the energy of the GM
-    var_indices (numpy array): indices for the best label for each variable
-  """
-  ogm_params = ogm.InfParam(steps=n_steps, damping=damping, convergenceBound=convergence_bound)
-  infr_output = ogm.inference.BeliefPropagation(gm, parameter=ogm_params)
-  
-  if verbose:
-    infr_output.infer(infr_output.verboseVisitor())
-  else:
-    infr_output.infer()
-  
-  detected_vars = []
-  for i in range(0, gm.numberOfVariables):
-    if gm.numberOfLabels(i) > 1:
-      detected_vars.append(i)
-  
-  infr_marginals = infr_output.marginals(detected_vars)
-  infr_marginals = np.exp(-infr_marginals)
-  
-  infr_best_match = infr_output.arg()
-  infr_energy = infr_output.value()
-  
-  return infr_energy, infr_best_match, infr_marginals
+    """ Run belief propagation on the providede graphical model
+    returns:
+      energy (float): the energy of the GM
+      var_indices (numpy array): indices for the best label for each variable
+    """
+    ogm_params = ogm.InfParam(steps=n_steps, damping=damping, convergenceBound=convergence_bound)
+    infr_output = ogm.inference.BeliefPropagation(gm, parameter=ogm_params)
+    
+    if verbose:
+        infr_output.infer(infr_output.verboseVisitor())
+    else:
+        infr_output.infer()
+    
+    detected_vars = []
+    for i in range(0, gm.numberOfVariables):
+        if gm.numberOfLabels(i) > 1:
+            detected_vars.append(i)
+    
+    infr_marginals = infr_output.marginals(detected_vars)
+    infr_marginals = np.exp(-infr_marginals)
+    
+    infr_best_match = infr_output.arg()
+    infr_energy = infr_output.value()
+    
+    return infr_energy, infr_best_match, infr_marginals
+
+
+
+def gmm_pdf(X, mixture, mu, sigma):
+    n_components = len(mixture)
+    n_vals = len(X)
+    
+    mixed_pdf = np.zeros(n_vals)
+    for i in range(0, n_components):
+       mixed_pdf += mvn.pdf(X, mu[i], sigma[i]) * mixture[i]
+    
+    return mixed_pdf
 
 
 
@@ -641,7 +655,7 @@ if __name__ == '__main__':
     query_ix = 0
     img_ix = 0
     
-    query = queries['simple_graphs'][query_ix]
+    query = queries['simple_graphs'][query_ix].annotations
     ifdata.configure(img_ix, query)
     gm, tracker = generate_pgm(ifdata)
     energy, best_bboxes, var_marginals = do_inference(gm)    
