@@ -1,6 +1,7 @@
-#from __future__ import print_function
+from __future__ import print_function
 
 import os
+import sys
 import json
 import itertools
 import numpy as np
@@ -97,7 +98,6 @@ def get_class_detections(image_ix, potential_data, platt_mod, object_names, verb
         
         class_det = np.concatenate((box_coords, scores), axis=1)
         detections[det_ix] = class_det
-        if verbose: print "%d: %s" % (det_ix, o)
         det_ix += 1
         
     return dict(zip(object_names, detections))
@@ -380,13 +380,15 @@ class _DetectionTracker (object):
         self.object_names = []
 
 class DetectionGroup (object):
-    def __init__(self, rel_str, ll_relationship, object_boxes, object_name, subject_boxes, subject_name):
+    def __init__(self, rel_str, ll_relationship, object_boxes, object_name, object_pgm_ix, subject_boxes, subject_name, subject_pgm_ix):
         self.relationship = rel_str
         self.ll_relationship = ll_relationship
         self.object_boxes = object_boxes
         self.object_name = object_name
+        self.object_pgm_ix = object_pgm_ix
         self.subject_boxes = subject_boxes
         self.subject_name = subject_name
+        self.subject_pgm_ix = subject_pgm_ix
 
 class DetectionTracker (object):
     def __init__(self, image_path):
@@ -398,8 +400,8 @@ class DetectionTracker (object):
         self.detected_vars = []
         self.relationships = []
   
-    def add_group(self, rel_str, ll_relationship, object_boxes, object_name, subject_boxes, subject_name):
-        grp = DetectionGroup(rel_str, ll_relationship, object_boxes, object_name, subject_boxes, subject_name)
+    def add_group(self, rel_str, ll_relationship, object_boxes, object_name, object_pgm_ix, subject_boxes, subject_name, subject_pgm_ix):
+        grp = DetectionGroup(rel_str, ll_relationship, object_boxes, object_name, object_pgm_ix, subject_boxes, subject_name, subject_pgm_ix)
         self.relationships.append(grp)
 
 
@@ -446,17 +448,11 @@ def generate_pgm(if_data, verbose=False):
             n_vars.append(n_labels)
     
     gm = ogm.gm(n_vars, operator='adder')
-    if verbose:
-        print "number of variables: {0}".format(gm.numberOfVariables)
-        for l in range(0, gm.numberOfVariables):
-            print "  labels for var {0}: {1}".format(l, gm.numberOfLabels(l))
     
     functions = []
     
     # generate 1st order functions for objects
     # TODO: test an uniform dist for missing objects
-    if verbose: print "unary functions - objects:"
-    
     unary_dets = []
     is_cnn_detected = []
     for obj_ix in range(0, n_objects):
@@ -469,7 +465,6 @@ def generate_pgm(if_data, verbose=False):
         detail = "unary function for object '{0}'".format(object_name)
         
         if object_is_detected[obj_ix]:
-            if verbose: print "  adding {0} as full explicit function (qry_ix:{1}, pgm_ix:{2})".format(detail, obj_ix, pgm_ix)
             is_cnn_detected.append(True)
             prefix_object_name = "obj:" + object_name
             detections = object_detections[prefix_object_name]
@@ -477,14 +472,12 @@ def generate_pgm(if_data, verbose=False):
             log_scores = -np.log(detections[:,4])
             fid = gm.addFunction(log_scores)
         else:
-            if verbose: print "  skipping {0}, no detection available (qry_ix:{1})".format(object_name, obj_ix)
             continue
         
         func_detail = FuncDetail(fid, [pgm_ix], "explicit", "object unaries", detail)
         functions.append(func_detail)
     
     #generate 1st order functions for attributes
-    if verbose: print "unary functions - attributes:"
     n_attributes = len(per_object_attributes)
     for attr_ix in range(0, n_attributes):
         obj_ix = int(per_object_attributes[attr_ix][0])
@@ -493,18 +486,15 @@ def generate_pgm(if_data, verbose=False):
         prefix_attribute_name = "atr:" + attribute_name
         
         if prefix_attribute_name not in attribute_detections:
-            if verbose: print "  skipping attribute '{0}' for object '{1}' (qry_ix:{2}), no attribute detection available".format(attribute_name, query_graph.objects[obj_ix].names, obj_ix)
             continue
         
         if not object_is_detected[obj_ix]:
-            if verbose: print "  skipping attribute '{0}' for object '{1}' (qry_ix:{2}), no object detection available".format(attribute_name, query_graph.objects[obj_ix].names, obj_ix)
             continue
         
         detections = attribute_detections[prefix_attribute_name]
         log_scores = -np.log(detections[:,4])
         
         detail = "unary function for attribute '{0}' of object '{1}' (qry_ix:{2}, pgm_ix:{3})".format(attribute_name, query_graph.objects[obj_ix].names, obj_ix, pgm_ix)
-        if verbose: print "  adding {0}".format(detail)
         
         fid = gm.addFunction(log_scores)
         func_detail = FuncDetail(fid, [pgm_ix], "explicit", "attribute unaries", detail)
@@ -549,7 +539,6 @@ def generate_pgm(if_data, verbose=False):
     tracker.box_pairs = master_cart_prod
     
     # process each binary triple in the list
-    if verbose: print "binary functions:"
     for trip in trip_list:
         sub_ix = trip.subject
         sub_pgm_ix = query_to_pgm[sub_ix]
@@ -568,23 +557,18 @@ def generate_pgm(if_data, verbose=False):
         
         # check if there is a gmm for the specific triple string
         if bin_trip_key not in relationship_models:
-            if verbose: print "  no model for '{0}', generating generic relationship string".format(bin_trip_key)
             bin_trip_key = "*_" + relationship.replace(" ", "_") + "_*"
             if bin_trip_key not in relationship_models:
-                if verbose: print "    skipping binary function for relationship '{0}', no model available".format(bin_trip_key)
                 continue
         
         # verify object detections
         if sub_ix == obj_ix:
-            if verbose: print "    self-relationships not possible in OpenGM, skipping relationship"
             continue
         
         if not object_is_detected[sub_ix]:
-            if verbose: print "    no detections for object '{0}', skipping relationship (qry_ix:{1})".format(subject_name, sub_ix)
             continue
         
         if not object_is_detected[obj_ix]:
-            if verbose: print "    no detections for object '{0}', skipping relationship (qry_ix:{1})".format(object_name, obj_ix)
             continue
         
         # get model parameters
@@ -630,7 +614,7 @@ def generate_pgm(if_data, verbose=False):
         log_likelihoods = -np.log(sig_scores)
         
         #tracker.add_group(bin_trip_key, np.copy(log_likelihoods), np.copy(bin_object_box), object_name, np.copy(bin_subject_box), subject_name) # TODO: are these copy calls necessary?
-        tracker.add_group(bin_trip_key, log_likelihoods, bin_object_box, object_name, bin_subject_box, subject_name)
+        tracker.add_group(bin_trip_key, log_likelihoods, bin_object_box, object_name, obj_pgm_ix, bin_subject_box, subject_name, sub_pgm_ix)
         
         # generate the matrix of functions
         n_subject_val = len(bin_subject_box)
@@ -640,7 +624,6 @@ def generate_pgm(if_data, verbose=False):
         
         # add binary functions to the GM
         detail = "binary functions for relationship '%s'" % (bin_trip_key)
-        if verbose: print("    adding %s" % detail)
         fid = gm.addFunction(bin_functions)
         
         var_indices = [sub_pgm_ix, obj_pgm_ix]
@@ -652,17 +635,11 @@ def generate_pgm(if_data, verbose=False):
     for f in functions:
         n_indices = len(f.var_indices)
         if n_indices == 1:
-            if verbose:
-                print "  adding unary factor: {0}".format(f.detail)
-                print "    fid: {0}   var: {1}".format(f.gm_function_id.getFunctionIndex(), f.var_indices[0])
             gm.addFactor(f.gm_function_id, f.var_indices[0])
         elif n_indices == 2:
-            if verbose:
-                print "  adding binary factor: {0}".format(f.detail)
-                print "    fid: {0}   var: {1}".format(f.gm_function_id.getFunctionIndex(), f.var_indices)
             gm.addFactor(f.gm_function_id, f.var_indices)
         else:
-            if verbose: print "skipping unexpected factor with {0} indices: {1}".format(n_indices, f.function_type)
+            continue
     
     return gm, tracker
 
@@ -710,19 +687,113 @@ def gmm_pdf(X, mixture, mu, sigma):
 
 
 #===============================================================================
+#
+#
+def get_factors(query, query_ix, image_ixs, ifdata):
+    object_attributes = get_object_attributes(query)
+    
+    image_factors = []
+    factor_header_strs = ['image_ix']
+    header_done = False
+    image_bboxes = []
+    bbox_header_strs = ['image_ix', 'object_name', 'bbox_ix', 'x', 'y', 'w', 'h', 'score']
+    
+    for image_ix in image_ixs:
+        print('q{:03}: image {:03}'.format(query_ix, image_ix), end='\r'); sys.stdout.flush()
+        ifdata.configure(image_ix, query)
+        gm, tracker = generate_pgm(ifdata)
+        energy, best_bboxes, var_marginals = do_inference(gm)
+
+        obj_names = tracker.object_names
+        factors = []
+        bboxes = []
+        factors.append(image_ix)
+        
+        for obj_ix, obj_name in enumerate(obj_names):
+            bbox_ix = best_bboxes[obj_ix]
+            score = tracker.unary_detections[obj_ix][bbox_ix]
+            coords = tracker.box_coords[bbox_ix]
+            x = int(coords[0])
+            y = int(coords[1])
+            w = int(coords[2])
+            h = int(coords[3])
+            
+            line = [image_ix, 'OBJ|'+obj_name.encode('ascii', 'ignore'), bbox_ix, x, y, w, h, score]
+            bboxes.append(line)
+            factors.append(score)
+            if not header_done:
+                factor_header_strs.append('OBJ|'+obj_name.encode('ascii', 'ignore'))
+
+            # get attribute score for factorization
+            for attributes in object_attributes:
+                if int(attributes[0]) == obj_ix:
+                    dets = ifdata.attribute_detections['atr:'+attributes[1]]
+                    score = dets[bbox_ix][4]
+                    
+                    factors.append(score)
+                    if not header_done:
+                        factor_header_strs.append('ATR|'+attributes[1].encode('ascii', 'ignore'))
+
+        for rel in tracker.relationships:
+            n_subs = len(tracker.relationships[0].subject_boxes)
+            n_objs = len(tracker.relationships[0].object_boxes)
+            ll_mtx = np.reshape(rel.ll_relationship, (n_subs, n_objs))
+
+            sub_pgm_ix = rel.subject_pgm_ix
+            best_sub_ix = best_bboxes[sub_pgm_ix]
+
+            obj_pgm_ix = rel.object_pgm_ix
+            best_obj_ix = best_bboxes[obj_pgm_ix]
+
+            if obj_pgm_ix < sub_pgm_ix:
+                rel_score = ll_mtx[best_sub_ix, best_obj_ix]
+            else:
+                rel_score = ll_mtx[best_sub_ix, best_obj_ix]
+            rel_score = np.exp(-rel_score)
+
+            factors.append(rel_score)
+            if not header_done:
+                factor_header_strs.append('REL|'+rel.relationship.encode('ascii', 'ignore'))
+        header_done = True
+        
+        for line in bboxes:
+            image_bboxes.append(line)
+        image_factors.append(factors)
+    
+    image_bboxes = np.array(image_bboxes, dtype=np.object)
+    image_factors = np.array(image_factors, dtype=np.object)
+    
+    return factor_header_strs, image_factors, bbox_header_strs, image_bboxes
+
+
+
+#===============================================================================
 # MAIN
 #
 if __name__ == '__main__':
+    output_dir = '/home/econser/research/py_irsg_factors/output/' # TODO: parameterize this one
+    
     vgd, potentials, platt_mod, bin_mod, queries, ifdata = get_all_data()
-    import pdb; pdb.set_trace()
-    
-    query_ix = 0
-    img_ix = 0
-    
-    query = queries['simple_graphs'][query_ix].annotations
-    ifdata.configure(img_ix, query)
-    gm, tracker = generate_pgm(ifdata)
-    energy, best_bboxes, var_marginals = do_inference(gm)    
-    
-    import pdb; pdb.set_trace()
-    print 'done'
+
+    image_ixs = np.arange(1000)
+    n_queries = len(queries['simple_graphs'])
+    for query_ix in range(0, n_queries):
+        query = queries['simple_graphs'][query_ix].annotations
+        fac_headers, factors, bbox_headers, best_bboxes = get_factors(query, query_ix, image_ixs, ifdata)
+        
+        header = ''
+        for i, s in enumerate(fac_headers):
+            header += s
+            if i < len(fac_headers)-1:
+                header += ', '
+        output_fname = os.path.join(output_dir, 'q{:03}_factors_simple.csv'.format(query_ix))
+        fmt = '%d, ' + ('%0.3f, ' * (len(fac_headers)-2)) + '%0.3f'
+        np.savetxt(output_fname, factors, header=header, fmt=fmt, comments='')
+
+        header = ''
+        for i, s in enumerate(bbox_headers):
+            header += s
+            if i < len(bbox_headers)-1:
+                header += ', '
+        output_fname = os.path.join(output_dir, 'q{:03}_bboxes_simple.csv'.format(query_ix))
+        np.savetxt(output_fname, best_bboxes, header=header, comments='', fmt='%d, %s, %d, %d, %d, %d, %d, %0.3f')
