@@ -1,6 +1,7 @@
 {
     "file_paths":{"output_path":"/home/econser/research/py_irsg_factors/output/",
 		  "image_path":"/home/econser/research/py_irsg_factors/images/irsg_test/",
-		  "mat_path":"/home/econser/research/py_irsg_factors/data/model_params/"
+		  "mat_path":"/home/econser/research/py_irsg_factors/data/model_params/",
+		  "data_path":"/home/econser/research/py_irsg_factors/data/"
 		 }
 }

@@ -695,15 +695,21 @@ def get_factors(query, query_ix, image_ixs, ifdata):
     image_factors = []
     factor_header_strs = ['image_ix']
     header_done = False
+    
     image_bboxes = []
     bbox_header_strs = ['image_ix', 'object_name', 'bbox_ix', 'x', 'y', 'w', 'h', 'score']
+    
+    image_energies = []
+    energy_header_strs = ['image_ix', 'energy']
     
     for image_ix in image_ixs:
         print('q{:03}: image {:03}'.format(query_ix, image_ix), end='\r'); sys.stdout.flush()
         ifdata.configure(image_ix, query)
         gm, tracker = generate_pgm(ifdata)
         energy, best_bboxes, var_marginals = do_inference(gm)
-
+        
+        image_energies.append((image_ix, energy))
+        
         obj_names = tracker.object_names
         factors = []
         bboxes = []
@@ -723,7 +729,7 @@ def get_factors(query, query_ix, image_ixs, ifdata):
             factors.append(score)
             if not header_done:
                 factor_header_strs.append('OBJ|'+obj_name.encode('ascii', 'ignore'))
-
+            
             # get attribute score for factorization
             for attributes in object_attributes:
                 if int(attributes[0]) == obj_ix:
@@ -733,24 +739,24 @@ def get_factors(query, query_ix, image_ixs, ifdata):
                     factors.append(score)
                     if not header_done:
                         factor_header_strs.append('ATR|'+attributes[1].encode('ascii', 'ignore'))
-
+        
         for rel in tracker.relationships:
             n_subs = len(tracker.relationships[0].subject_boxes)
             n_objs = len(tracker.relationships[0].object_boxes)
             ll_mtx = np.reshape(rel.ll_relationship, (n_subs, n_objs))
-
+            
             sub_pgm_ix = rel.subject_pgm_ix
             best_sub_ix = best_bboxes[sub_pgm_ix]
-
+            
             obj_pgm_ix = rel.object_pgm_ix
             best_obj_ix = best_bboxes[obj_pgm_ix]
-
+            
             if obj_pgm_ix < sub_pgm_ix:
                 rel_score = ll_mtx[best_sub_ix, best_obj_ix]
             else:
                 rel_score = ll_mtx[best_sub_ix, best_obj_ix]
             rel_score = np.exp(-rel_score)
-
+            
             factors.append(rel_score)
             if not header_done:
                 factor_header_strs.append('REL|'+rel.relationship.encode('ascii', 'ignore'))
@@ -762,8 +768,9 @@ def get_factors(query, query_ix, image_ixs, ifdata):
     
     image_bboxes = np.array(image_bboxes, dtype=np.object)
     image_factors = np.array(image_factors, dtype=np.object)
+    image_energies = np.array(image_energies, dtype=np.object)
     
-    return factor_header_strs, image_factors, bbox_header_strs, image_bboxes
+    return factor_header_strs, image_factors, bbox_header_strs, image_bboxes, energy_header_strs, image_energies
 
 
 
@@ -774,12 +781,12 @@ if __name__ == '__main__':
     output_dir = '/home/econser/research/py_irsg_factors/output/' # TODO: parameterize this one
     
     vgd, potentials, platt_mod, bin_mod, queries, ifdata = get_all_data()
-
+    
     image_ixs = np.arange(1000)
     n_queries = len(queries['simple_graphs'])
     for query_ix in range(0, n_queries):
         query = queries['simple_graphs'][query_ix].annotations
-        fac_headers, factors, bbox_headers, best_bboxes = get_factors(query, query_ix, image_ixs, ifdata)
+        fac_headers, factors, bbox_headers, best_bboxes, energy_headers, energies = get_factors(query, query_ix, image_ixs, ifdata)
         
         header = ''
         for i, s in enumerate(fac_headers):
@@ -789,7 +796,7 @@ if __name__ == '__main__':
         output_fname = os.path.join(output_dir, 'q{:03}_factors_simple.csv'.format(query_ix))
         fmt = '%d, ' + ('%0.3f, ' * (len(fac_headers)-2)) + '%0.3f'
         np.savetxt(output_fname, factors, header=header, fmt=fmt, comments='')
-
+        
         header = ''
         for i, s in enumerate(bbox_headers):
             header += s
@@ -797,3 +804,11 @@ if __name__ == '__main__':
                 header += ', '
         output_fname = os.path.join(output_dir, 'q{:03}_bboxes_simple.csv'.format(query_ix))
         np.savetxt(output_fname, best_bboxes, header=header, comments='', fmt='%d, %s, %d, %d, %d, %d, %d, %0.3f')
+        
+        header = ''
+        for i, s in enumerate(energy_headers):
+            header += s
+            if i < len(energy_headers)-1:
+                header += ', '
+        output_fname = os.path.join(output_dir, 'q{:03}_energies_simple.csv'.format(query_ix))
+        np.savetxt(output_fname, energies, header=header, comments='', fmt='%d, %0.3f')
