@@ -1,5 +1,7 @@
+import os
 import csv
 import json
+import glob
 import numpy as np
 import scipy.io as sio
 
@@ -119,7 +121,62 @@ def does_match(image, scene):
 
 
 #===============================================================================
+# R@K GENERATION
 #
+def get_r_at_k_simple(base_dir, gt_map, do_holdout=False, file_suffix='_energy_values'):
+    k_count = np.zeros(1000)
+    n_queries = len(gt_map)
+    for i in range(0, n_queries):
+        filename = base_dir + 'q{:03d}'.format(i) + file_suffix + '.csv'
+        if not os.path.isfile(filename):
+            continue
+        energies = np.genfromtxt(filename, delimiter=',', skip_header=1)
+        sort_ix = np.argsort(energies[:,1])
+        recall = np.ones(1000, dtype=np.float)
+        for k in range(0, len(energies)):
+            if do_holdout and energies[sort_ix][k][0] == gt_map[i][0]:
+                recall[k] = 0.0
+                continue
+            indices = np.array(energies[sort_ix][0:k+1][:,0])
+            true_positives = set(indices) & set(gt_map[i])
+            if len(true_positives) > 0:
+                break
+            recall[k] = 0.0
+        k_count += recall
+    return k_count / n_queries
+
+
+
+def get_ratk(energy, ground_truth):
+    n_images = len(energy)
+    n_gt_images = len(ground_truth)
+    ratk = np.zeros_like(energy, dtype=np.float)
+    sorted_energy_ixs = np.argsort(energy)
+    ground_truth_set = set(ground_truth)
+    for k in range(0, n_images):
+        hits = set(sorted_energy_ixs[0:k+1]) & ground_truth_set
+        ratk[k] = len(hits) / float(n_gt_images)
+    return ratk
+
+
+
+def get_ratk_alt(energy, ground_truth):
+    n_images = len(energy)
+    n_gt_images = len(ground_truth)
+    ratk = np.ones_like(energy, dtype=np.float)
+    sorted_energy_ixs = np.argsort(energy)
+    ground_truth_set = set(ground_truth)
+    for k in range(0, n_images):
+        hits = set(sorted_energy_ixs[0:k+1]) & ground_truth_set
+        if len(hits) > 0:
+            break
+        ratk[k] = 0.0
+    return ratk
+
+
+
+#===============================================================================
+# GROUND TRUTH GENERATION
 #
 def get_data(data_path):
     print("loading vg_data file...")
@@ -149,11 +206,13 @@ def read_match_file(match_file):
 # MAIN
 #
 if __name__ == '__main__':
+    match_file = '/home/econser/research/py_irsg_factors/data/partial_query_matches.csv'
+    
+    cfg_file = open('config.json')
+    cfg_data = json.load(cfg_file)
+    
     matches = None
     if match_file is None:
-        cfg_file = open('config.json')
-        cfg_data = json.load(cfg_file)
-        
         mat_path = cfg_data['file_paths']['mat_path']
         matches = get_data(mat_path)
         
@@ -166,9 +225,61 @@ if __name__ == '__main__':
     else:
         matches = read_match_file(match_file)
     
-    import pdb; pdb.set_trace()
+    # get the energy csvs
+    output_path = cfg_data['file_paths']['output_path']
+    energy_csvs = glob.glob(os.path.join(output_path, '*energies*'))
+    
+    # parse out the indices
     n_queries = len(matches)
+    irsg_energies = np.ones((n_queries, 1000)) * -1.0
+    start_ix = len(output_path) + 1
+    for fname in energy_csvs:
+        q_data = np.genfromtxt(fname, delimiter=', ', skip_header=1)
+        sort_ixs = np.argsort(q_data[:,0]) # sort by img index, just in case
+        q_data = q_data[sort_ixs]
+        
+        q_ix = int(fname[start_ix:start_ix+3])
+        irsg_energies[q_ix] = q_data[:,1]
+    
+    # generate geometric mean energies
+    query_ixs = np.arange(150)
+    image_ixs = np.arange(1000)
+    geomean_energies = []
+    
+    for query_ix in query_ixs:
+        fname = os.path.join(output_path, 'q{:03}_factors_simple.csv'.format(query_ix))
+        with open(fname, 'rb') as f:
+            header = f.readline()
+            header = header.split(', ')
+            header = np.array(header, dtype=np.str)
+        factors = np.genfromtxt(fname, delimiter=',', skip_header=1)
+        
+        n_factors = len(header)-1
+        geomean_all = np.product(factors[:,1:], axis=1)**(1./n_factors)
+        geomean_all = np.exp(-geomean_all)
+        
+        obj_ixs = [i for i, hdr in enumerate(header) if 'OBJ|' in hdr]
+        n_objects = len(obj_ixs)
+        geomean_obj = np.product(factors[:, obj_ixs], axis=1)**(1./n_objects)
+        geomean_obj = np.exp(-geomean_obj)
+        
+        geomean_energies.append(geomean_obj)
+    geomean_energies = np.array(geomean_energies)
+    
+    # calculate r@k
+    irsg_ratk = []
+    irsg_ratk_alt = []
+    geomean_ratk = []
     for query_ixs in range(0, n_queries):
         ratk = get_ratk(irsg_energies[query_ix], matches[query_ix])
         irsg_ratk.append(ratk)
+        
+        ratk = get_ratk_alt(irsg_energies[query_ix], matches[query_ix])
+        irsg_ratk_alt.append(ratk)
+        
+        ratk = get_ratk(geomean_energies[query_ix], matches[query_ix])
+        geomean_ratk.append(ratk)
+    
+    # TODO: generate plots
+    import pdb; pdb.set_trace()
     print 'done!'
